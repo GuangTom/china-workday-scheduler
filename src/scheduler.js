@@ -1,28 +1,44 @@
 import schedule from 'node-schedule'
 import {
   getInternetTime,
-  getNextWorkdayMidnight,
-  getNextWorkdayAfternoon,
-  isChineseWorkday
+  isChineseWorkday,
+  getNextWorkdayTime,
+  formatDateToUTC8
 } from './utils.js'
+import config from './config.js'
 
 /**
- * 调度器类，用于在中国法定工作日的 00:00:00 和 15:00:00 调用指定 API
+ * 工作日调度器类
  */
 class WorkdayScheduler {
   /**
-   * 创建一个工作日调度器
-   * @param {Function} apiCallback 要调用的API回调函数
+   * 创建工作日调度器实例
+   * @param {Function} apiCallFunction - API调用函数
    */
-  constructor(apiCallback) {
-    if (typeof apiCallback !== 'function') {
-      throw new Error('apiCallback 必须是一个函数')
+  constructor(apiCallFunction) {
+    if (typeof apiCallFunction !== 'function') {
+      throw new Error('apiCallFunction 必须是一个函数')
     }
 
-    this.apiCallback = apiCallback
-    this.job1 = null
-    this.job2 = null
+    this.apiCallFunction = apiCallFunction
+    this.scheduledJobs = [] // 存储所有计划任务
     this.isRunning = false
+
+    // 从配置中获取任务列表，如果配置不存在则使用默认值
+    this.scheduledTasks = config.scheduleTasks || [
+      { name: 'Example Task', hour: 0, minute: 0, enabled: true }
+    ]
+
+    // 只记录启用的任务
+    console.log('工作日调度时间配置:')
+    const enabledTasks = this.scheduledTasks.filter(task => task.enabled)
+    if (enabledTasks.length > 0) {
+      enabledTasks.forEach(task => {
+        console.log(`- ${task.name}: ${task.hour}:${task.minute.toString().padStart(2, '0')}`)
+      })
+    } else {
+      console.log('- 没有启用的任务')
+    }
   }
 
   /**
@@ -50,16 +66,15 @@ class WorkdayScheduler {
       return
     }
 
-    if (this.job1) {
-      this.job1.cancel()
-      this.job1 = null
-    }
+    // 取消所有计划任务
+    this.scheduledJobs.forEach(job => {
+      if (job) {
+        job.cancel()
+      }
+    })
 
-    if (this.job2) {
-      this.job2.cancel()
-      this.job2 = null
-    }
-
+    // 清空任务数组
+    this.scheduledJobs = []
     this.isRunning = false
     console.log('工作日调度器已停止')
   }
@@ -69,78 +84,122 @@ class WorkdayScheduler {
    */
   async scheduleNextExecution() {
     try {
-      // 取消现有的任务（如果有）
-      if (this.job1) {
-        this.job1.cancel()
-        this.job1 = null
-      }
-
-      if (this.job2) {
-        this.job2.cancel()
-        this.job2 = null
-      }
-
-      // 获取当前互联网时间
-      const now = await getInternetTime()
-      console.log(`当前时间: ${now.toISOString()}`)
-
-      // 检查当前是否为工作日
-      const isWorkday = await isChineseWorkday(now)
-      console.log(`今天是${isWorkday ? '工作日' : '非工作日'}`)
-
-      // 如果现在是工作日且时间是00:00:00附近（允许1分钟误差）
-      const currentHour = now.getHours()
-      const currentMinute = now.getMinutes()
-
-      if (isWorkday && currentHour === 0 && currentMinute < 1) {
-        console.log('现在是工作日00:00:00，执行API调用')
-        await this.executeApiCall()
-      }
-
-      // 如果现在是工作日且时间是15:00:00附近（允许1分钟误差）
-      if (isWorkday && currentHour === 15 && currentMinute < 1) {
-        console.log('现在是工作日15:00:00，执行API调用')
-        await this.executeApiCall()
-      }
-
-      // 获取下一个工作日的00:00:00时间
-      const nextMidnightTime = await getNextWorkdayMidnight()
-      console.log(`下一次午夜执行时间: ${nextMidnightTime.toISOString()}`)
-
-      // 安排下一次午夜执行
-      this.job1 = schedule.scheduleJob(nextMidnightTime, async () => {
-        console.log(`触发午夜定时任务，当前时间: ${new Date().toISOString()}`)
-
-        // 执行API调用
-        await this.executeApiCall()
-
-        // 安排下一次执行
-        await this.scheduleNextExecution()
+      // 取消现有的任务
+      this.scheduledJobs.forEach(job => {
+        if (job) {
+          job.cancel()
+        }
       })
 
-      // 获取下一个工作日的 15:00:00 时间（如果次日是非工作日则不触发）
-      const nextAfternoonTime = await getNextWorkdayAfternoon()
-      if (nextAfternoonTime) {
-        console.log(`下一次下午执行时间: ${nextAfternoonTime.toISOString()}`)
+      // 清空任务数组
+      this.scheduledJobs = []
 
-        // 安排下一次下午执行
-        this.job2 = schedule.scheduleJob(nextAfternoonTime, async () => {
-          console.log(`触发下午定时任务，当前时间: ${new Date().toISOString()}`)
+      // 获取当前互联网时间
+      let now
+      try {
+        now = await getInternetTime()
+      } catch (error) {
+        console.error('获取互联网时间失败，使用本地时间:', error.message)
+        now = new Date() // 使用本地时间作为备选
+      }
+
+      // 检查当前是否为工作日
+      let isWorkday
+      try {
+        isWorkday = await isChineseWorkday(now)
+      } catch (error) {
+        console.error('检查工作日失败，使用简单周末判断:', error.message)
+        // 简单判断工作日（周一至周五）
+        const day = now.getDay()
+        isWorkday = day !== 0 && day !== 6
+      }
+
+      // 为每个启用的任务安排下一次执行
+      const maxRetries = 3
+
+      for (const task of this.scheduledTasks) {
+        if (!task.enabled) continue
+
+        // 获取下一个工作日的指定时间
+        let nextTaskTime
+        let retryCount = 0
+        let isNextDayRestDay = false // 标记下一天是否为休息日
+
+        while (retryCount < maxRetries) {
+          try {
+            // 使用统一的获取下一个工作日时间的函数
+            nextTaskTime = await getNextWorkdayTime(task.hour, task.minute)
+
+            // 检查下一个执行日期的后一天是否为休息日
+            const nextDay = new Date(nextTaskTime)
+            nextDay.setDate(nextDay.getDate() + 1)
+            try {
+              isNextDayRestDay = !(await isChineseWorkday(nextDay))
+            } catch (error) {
+              console.error(`检查下一天是否为休息日失败:`, error.message)
+              // 简单判断是否为周末
+              isNextDayRestDay = nextDay.getDay() === 0 || nextDay.getDay() === 6
+            }
+
+            break // 成功获取时间，跳出循环
+          } catch (error) {
+            retryCount++
+            console.error(`获取下一个工作日时间失败 (${task.name}, 尝试 ${retryCount}/${maxRetries}):`, error.message)
+
+            if (retryCount >= maxRetries) {
+              console.log('使用本地计算作为最终备选')
+              // 使用本地时间计算下一个工作日
+              const localNow = new Date()
+              let nextDay = new Date(localNow)
+              nextDay.setDate(nextDay.getDate() + 1)
+              nextDay.setHours(task.hour, task.minute, 0, 0)
+
+              // 简单判断工作日（周一至周五）
+              while (nextDay.getDay() === 0 || nextDay.getDay() === 6) {
+                nextDay.setDate(nextDay.getDate() + 1)
+              }
+
+              nextTaskTime = nextDay
+
+              // 简单判断下一天是否为休息日
+              const checkNextDay = new Date(nextTaskTime)
+              checkNextDay.setDate(checkNextDay.getDate() + 1)
+              isNextDayRestDay = checkNextDay.getDay() === 0 || checkNextDay.getDay() === 6
+            } else {
+              // 等待一段时间后重试
+              await new Promise(resolve => setTimeout(resolve, 2000))
+            }
+          }
+        }
+
+        // 如果配置了当次日是休息日时跳过执行，且下一天确实是休息日，则跳过此次调度
+        if (task.skipIfNextRestDay && isNextDayRestDay) {
+          console.log(`跳过任务 ${task.name} 的调度，因为次日是休息日`)
+          continue
+        }
+
+        console.log(`下一次执行时间 (${task.name}): ${formatDateToUTC8(nextTaskTime)}`)
+
+        // 安排下一次执行
+        const job = schedule.scheduleJob(nextTaskTime, async () => {
+          console.log(`触发定时任务 (${task.name})，当前时间: ${formatDateToUTC8(new Date())}`)
 
           // 执行API调用
           await this.executeApiCall()
 
-          // 不需要重新安排，因为 scheduleNextExecution 会在午夜任务中被调用
+          // 安排下一次执行
+          await this.scheduleNextExecution()
         })
-      } else {
-        console.log('次日是非工作日，不安排下午执行')
+
+        // 将任务添加到数组中
+        this.scheduledJobs.push(job)
       }
     } catch (error) {
       console.error('安排下一次执行时出错:', error)
 
-      // 出错时，1小时后重试
-      console.log('1小时后将重试安排下一次执行')
-      setTimeout(() => this.scheduleNextExecution(), 60 * 60 * 1000)
+      // 出错时，3分钟后重试
+      console.log('3分钟后将重试安排下一次执行')
+      setTimeout(() => this.scheduleNextExecution(), 3 * 60 * 1000)
     }
   }
 
@@ -150,7 +209,7 @@ class WorkdayScheduler {
   async executeApiCall() {
     try {
       console.log('执行API调用...')
-      await this.apiCallback()
+      await this.apiCallFunction()
       console.log('API调用成功')
     } catch (error) {
       console.error('API调用失败:', error)

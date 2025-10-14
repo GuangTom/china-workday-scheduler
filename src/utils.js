@@ -16,7 +16,8 @@ const __dirname = path.dirname(__filename)
 async function getInternetTime() {
   try {
     // 使用time.is API获取北京时间
-    const response = await axios.get('https://timeapi.io/api/Time/current/zone?timeZone=Asia/Shanghai')
+    const response = await axios.get(
+      'https://timeapi.io/api/Time/current/zone?timeZone=Asia/Shanghai')
     // timeapi.io返回的格式是 "2023-01-01T00:00:00"
     const { dateTime } = response.data
 
@@ -64,10 +65,6 @@ async function isChineseWorkday(date) {
       .find(day => day.date === formattedDate)
 
     if (matchingDay) {
-      console.log(
-        `根据本地数据，${formattedDate} 是${
-          matchingDay.isOffDay ? '休息日' : '工作日'}`)
-
       // isOffDay 为 false 表示工作日
       return !matchingDay.isOffDay
     }
@@ -75,89 +72,133 @@ async function isChineseWorkday(date) {
     // 如果本地数据中没有找到，则根据是否为周末判断
     const isWorkday = !isWeekend(date)
 
-    console.log(`${formattedDate} 不在节假日数据中，根据周末判断是${
-      isWorkday ? '工作日' : '休息日'}`)
-
     return isWorkday
   } catch (error) {
     console.error('检查工作日失败:', error.message)
     // 如果出现错误，仅根据是否为周末判断
-    console.log('使用周末判断作为备选')
     return !isWeekend(date)
   }
 }
 
 /**
- * 获取下一个工作日的00:00:00时间
- * @returns {Promise<Date>} 下一个工作日的零点时间
+ * 获取下一个工作日的指定时间
+ * @param {number} hour - 小时（24小时制）
+ * @param {number} minute - 分钟
+ * @returns {Promise<Date>} 下一个工作日的指定时间
  */
-async function getNextWorkdayMidnight() {
+async function getNextWorkdayTime(hour = 0, minute = 0) {
   // 获取当前互联网时间
   const now = await getInternetTime()
 
-  // 设置为明天的00:00:00
+  // 判断当前时间是否已经过了指定时间
+  const isPastTargetTime =
+    now.getHours() > hour || (now.getHours() === hour && now.getMinutes() >= minute)
+
+  // 如果当前是工作日且未过指定时间，设置为今天的指定时间
+  const isToday = await isChineseWorkday(now)
+  if (isToday && !isPastTargetTime) {
+    const today = new Date(now)
+    today.setHours(hour, minute, 0, 0)
+    return today
+  }
+
+  // 设置为明天的指定时间
   const tomorrow = new Date(now)
   tomorrow.setDate(tomorrow.getDate() + 1)
-  tomorrow.setHours(0, 0, 0, 0)
+  tomorrow.setHours(hour, minute, 0, 0)
 
   // 检查明天是否为工作日
   const isTomorrowWorkday = await isChineseWorkday(tomorrow)
 
+  // 如果明天是工作日，返回明天的指定时间
   if (isTomorrowWorkday) {
     return tomorrow
   }
 
   // 如果明天不是工作日，继续查找下一个工作日
+  // 这里需要循环查找，直到找到工作日为止
   let nextDay = new Date(tomorrow)
   let isWorkday = false
 
-  while (!isWorkday) {
+  // 最多查找10天，避免极端情况下的无限循环
+  for (let i = 0; i < 10; i++) {
     nextDay.setDate(nextDay.getDate() + 1)
     isWorkday = await isChineseWorkday(nextDay)
+
+    if (isWorkday) {
+      nextDay.setHours(hour, minute, 0, 0)
+      return nextDay
+    }
   }
 
+  // 如果10天内都没找到工作日，返回最后一天
+  // 这种情况极少发生，但为了安全起见添加此逻辑
+  nextDay.setHours(hour, minute, 0, 0)
   return nextDay
 }
 
 /**
- * 获取下一个工作日的 15:00:00 时间（如果次日是非工作日则返回 null）
- * @returns {Promise<Date|null>} 下一个工作日的下午时间，如果次日是非工作日则返回 null
+ * 将Date对象格式化为UTC+8时区的字符串
+ * @param {Date} date - 日期对象
+ * @returns {string} - 格式化后的字符串 (UTC+8)
  */
-async function getNextWorkdayAfternoon() {
-  // 获取当前互联网时间
-  const now = await getInternetTime()
-
-  // 判断当前时间是否已经过了 15:00
-  const isPast15 = now.getHours() >= 15;
-
-  // 如果当前是工作日且未过15:00，设置为今天的15:00:00
-  const isToday = await isChineseWorkday(now);
-  if (isToday && !isPast15) {
-    const today = new Date(now);
-    today.setHours(15, 0, 0, 0);
-    return today;
+function formatDateToUTC8(date) {
+  const options = {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
   }
+  return new Date(date).toLocaleString('zh-CN', options) + ' (UTC+8)'
+}
 
-  // 设置为明天的 15:00:00
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(15, 0, 0, 0);
-
-  // 检查明天是否为工作日
-  const isTomorrowWorkday = await isChineseWorkday(tomorrow);
-
-  // 如果明天是工作日，返回明天15:00
-  if (isTomorrowWorkday) {
-    return tomorrow;
+/**
+ * 统一的API调用错误处理函数
+ * @param {Error} error - 错误对象
+ * @param {string} operation - 操作名称
+ */
+function handleApiError(error, operation = 'API调用') {
+  console.error(`${operation}失败:`, error.message)
+  if (error.response) {
+    console.error('响应状态码:', error.response.status)
+    console.error('响应数据:', error.response.data)
+  } else if (error.request) {
+    console.error('未收到响应，请检查网络连接')
+  } else {
+    console.error('请求配置错误')
   }
+  return error
+}
 
-  // 如果明天不是工作日，返回null（不安排下午执行）
-  return null;
+/**
+ * 检查指定时间是否在目标时间点附近（允许一定误差）
+ * @param {Date} date - 要检查的时间
+ * @param {number} targetHour - 目标小时
+ * @param {number} targetMinute - 目标分钟
+ * @param {number} allowedErrorMinutes - 允许的误差（分钟）
+ * @returns {boolean} - 是否在目标时间点附近
+ */
+function isTimeNear(date, targetHour, targetMinute = 0, allowedErrorMinutes = 1) {
+  const hour = date.getHours()
+  const minute = date.getMinutes()
+
+  // 检查小时是否匹配
+  if (hour !== targetHour) return false
+
+  // 检查分钟是否在允许误差范围内
+  const minuteDiff = Math.abs(minute - targetMinute)
+  return minuteDiff <= allowedErrorMinutes
 }
 
 export {
   getInternetTime,
-  getNextWorkdayMidnight,
-  getNextWorkdayAfternoon,
-  isChineseWorkday
+  getNextWorkdayTime,
+  isChineseWorkday,
+  formatDateToUTC8,
+  handleApiError,
+  isTimeNear
 }

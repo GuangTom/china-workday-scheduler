@@ -1,12 +1,14 @@
 # 中国工作日调度器
 
-这是一个 Node.js 服务，用于在中国法定工作日（跳过法定休息日）的 00:00:00 准时调用指定的 API 接口。
+这是一个 Node.js 服务，用于在中国法定工作日（跳过法定休息日）的 00:00:00 和 15:00:00 准时调用指定的 API 接口。
 
 ## 功能特点
 
 - 自动获取互联网时间，确保时间准确性
 - 智能识别中国法定工作日，跳过法定节假日和周末
-- 在工作日的 00:00:00 准时触发 API 调用
+- 支持配置任意数量的任务时间点，灵活满足不同业务需求
+- 支持配置次日是休息日时是否执行任务
+- 支持测试模式，可立即触发一次 API 调用
 - 支持自定义 API 接口、请求方法、请求头和请求体
 - 自动重试和错误处理机制
 
@@ -30,50 +32,11 @@ yarn install
 
 ## 配置
 
-你可以通过环境变量或直接修改 `index.js` 文件来配置API调用参数：
+创建 `src/config.js` 文件来配置 API 调用参数：
 
-### 环境变量配置
+### 配置文件
 
-```bash
-# API接口URL
-export API_URL="https://your-api-endpoint.com/api/trigger"
-
-# API请求方法 (GET, POST, PUT, DELETE等)
-export API_METHOD="POST"
-
-# API请求头 (JSON格式字符串)
-export API_HEADERS='{"Content-Type":"application/json","Authorization":"Bearer your-token"}'
-
-# API请求体 (JSON格式字符串)
-export API_BODY='{"event":"workday-trigger","source":"scheduler"}'
-```
-
-### 直接修改代码
-
-你也可以直接修改 `index.js` 文件中的配置项：
-
-```javascript
-// 配置项
-const config = {
-  // API接口URL
-  apiUrl: process.env.API_URL || 'https://your-api-endpoint.com/api/trigger',
-
-  // API请求方法
-  apiMethod: process.env.API_METHOD || 'POST',
-
-  // API请求头
-  apiHeaders: process.env.API_HEADERS ? JSON.parse(process.env.API_HEADERS) : {
-    'Content-Type': 'application/json',
-    'Authorization': 'Bearer your-token'
-  },
-
-  // API请求体
-  apiBody: process.env.API_BODY ? JSON.parse(process.env.API_BODY) : {
-    event: 'workday-trigger',
-    source: 'scheduler'
-  }
-}
-```
+项目使用静态配置文件 `src/config.js` 进行配置，您可以参考文件 `src/config.js.example` 并根据实际情况生成 `src/config.js` 文件来修改 API 调用参数：
 
 ### 自定义API调用逻辑
 
@@ -91,7 +54,7 @@ async function callApi() {
 ### 启动服务
 
 ```bash
-node index.js
+node src/index.js
 ```
 
 或者使用 npm 脚本：
@@ -99,6 +62,24 @@ node index.js
 ```bash
 npm start
 ```
+
+### 测试模式
+
+如果您想立即测试 API 调用功能，可以使用测试模式：
+
+```bash
+node src/index.js -t
+# 或
+node src/index.js --test
+```
+
+或者使用 npm 脚本：
+
+```bash
+npm test
+```
+
+测试模式会在启动服务的同时，立即触发一次 API 调用，帮助您验证配置是否正确。
 
 ### 使用PM2进行进程管理（推荐）
 

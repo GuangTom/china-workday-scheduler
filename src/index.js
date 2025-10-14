@@ -1,29 +1,12 @@
 import WorkdayScheduler from './scheduler.js'
 import axios from 'axios'
+import config from './config.js'
+import { handleApiError } from './utils.js'
 
 /**
  * 中国工作日调度器 - 主程序
- * 在中国法定工作日的00:00:00调用指定的API接口
+ * 在中国法定工作日的指定的时间调用指定的API接口
  */
-
-// 配置项
-const config = {
-  // API接口URL
-  apiUrl: process.env.API_URL || 'https://example.com/api/workday-trigger',
-
-  // API请求方法
-  apiMethod: process.env.API_METHOD || 'POST',
-
-  // API请求头
-  apiHeaders: process.env.API_HEADERS ? JSON.parse(process.env.API_HEADERS) : {
-    'Content-Type': 'application/json'
-  },
-
-  // API请求体
-  apiBody: process.env.API_BODY ? JSON.parse(process.env.API_BODY) : {
-    trigger: 'workday-midnight'
-  }
-}
 
 /**
  * 调用API的函数
@@ -41,15 +24,14 @@ async function callApi() {
     })
 
     console.log('API调用成功，响应状态码:', response.status)
-    console.log('响应数据:', JSON.stringify(response.data, null, 2))
+    // 只在调试模式下输出详细响应数据
+    if (config.debug) {
+      console.log('响应数据:', JSON.stringify(response.data, null, 2))
+    }
 
     return response.data
   } catch (error) {
-    console.error('API调用失败:', error.message)
-    if (error.response) {
-      console.error('响应状态码:', error.response.status)
-      console.error('响应数据:', error.response.data)
-    }
+    handleApiError(error)
     throw error
   }
 }
@@ -85,11 +67,46 @@ function startScheduler() {
   })
 }
 
+// 解析命令行参数
+function parseCommandLineArgs() {
+  const args = process.argv.slice(2)
+  const options = {
+    testMode: false
+  }
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '-t' || args[i] === '--test') {
+      options.testMode = true
+    }
+  }
+
+  return options
+}
+
 // 如果直接运行此文件，则启动调度器
 // 在ESM中，可以通过检查import.meta.url来判断是否为直接运行
-const isMainModule = import.meta.url.endsWith(process.argv[1]);
+const isMainModule = import.meta.url.endsWith(process.argv[1])
+
 if (isMainModule) {
   console.log('中国工作日调度器 - 启动中...')
+
+  // 解析命令行参数
+  const options = parseCommandLineArgs()
+
+  // 如果是测试模式，立即触发一次API调用
+  if (options.testMode) {
+    console.log('测试模式：立即触发一次API调用...')
+    callApi()
+      .then(() => {
+        console.log('测试API调用完成')
+      })
+      .catch(error => {
+        console.error('测试API调用失败:', error)
+        process.exit(1)
+      })
+  }
+
+  // 启动正常调度器
   startScheduler()
 }
 

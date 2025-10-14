@@ -1,0 +1,63 @@
+/**
+ * 中国工作日调度器 - API 配置文件
+ * 复制此文件为 config.js 并填入您的实际配置
+ */
+
+// API 配置
+const config = {
+  // API接口URL
+  apiUrl: 'https://your-api-endpoint.com/api/trigger',
+
+  // API请求方法
+  apiMethod: 'POST',
+
+  // API请求头
+  apiHeaders: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer your-token'
+  },
+
+  // API请求体
+  apiBody: {
+    event: 'workday-trigger',
+    source: 'scheduler'
+  },
+
+  /**
+   * @description 任务触发时间配置（可配置任意数量的任务）
+   * @Array scheduleTasks 任务数组
+   * @item name 任务名称
+   * @item hour 小时（24小时制）
+   * @item minute 分钟
+   * @item enabled 是否启用
+   * @item skipIfNextRestDay 当次日是休息日时，是否跳过执行
+   * */
+  scheduleTasks: [
+    // 任务1：0 时触发
+    {
+      name: '任务 1',
+      hour: 0,
+      minute: 0,
+      enabled: true,
+      skipIfNextRestDay: false
+    },
+    // 任务2：15 时触发
+    {
+      name: '任务2',
+      hour: 15,
+      minute: 0,
+      enabled: true,
+      skipIfNextRestDay: true
+    },
+    // 可以添加更多任务，例如：
+    // {
+    //   name: 'Example Task',
+    //   hour: 0,
+    //   minute: 0,
+    //   enabled: true,
+    //   skipIfNextRestDay: true
+    // }
+  ]
+}
+
+export default config

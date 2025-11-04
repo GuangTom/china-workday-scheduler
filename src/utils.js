@@ -9,6 +9,15 @@ import { fileURLToPath } from 'url'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
+// 全局缓存的“当前互联网时间”（UTC+8视图）
+let currentInternetTime = null
+// 获取当前缓存时间（仅返回全局变量，不进行任何初始化或网络请求）
+const getCurrentTime = () => currentInternetTime
+
+let lastInternetTimeFetchSucceeded = false
+// 获取最近一次互联网时间获取是否成功（true: 成功；false: 使用本地fallback）
+const wasLastInternetFetchSuccessful = () => lastInternetTimeFetchSucceeded
+
 /**
  * 获取互联网时间
  * @returns {Promise<Date>} 当前互联网时间
@@ -18,16 +27,23 @@ async function getInternetTime() {
     // 使用time.is API获取北京时间
     const response = await axios.get(
       'https://timeapi.io/api/Time/current/zone?timeZone=Asia/Shanghai')
+
     // timeapi.io返回的格式是 "2023-01-01T00:00:00"
     const { dateTime } = response.data
 
-    return new Date(dateTime)
+    // 更新全局时间缓存并返回
+    currentInternetTime = new Date(dateTime)
+    lastInternetTimeFetchSucceeded = true
+
+    return currentInternetTime
   } catch (error) {
     console.error('获取互联网时间失败:', error.message)
-    // 如果API调用失败，使用本地时间作为备选
-    console.log('使用本地时间作为备选')
 
-    return utcToZonedTime(new Date(), 'Asia/Shanghai')
+    // 如果API调用失败，使用本地时间的UTC+8视图作为备选，同时更新缓存
+    currentInternetTime = utcToZonedTime(new Date(), 'Asia/Shanghai')
+    lastInternetTimeFetchSucceeded = false
+
+    return currentInternetTime
   }
 }
 
@@ -37,7 +53,10 @@ async function getInternetTime() {
  */
 function loadHolidayData() {
   try {
-    const filePath = path.join(__dirname, '../public/2025.json')
+    // 根据当前年份选择对应的节假日 JSON 文件
+    const baseDate = getCurrentTime() || utcToZonedTime(new Date(), 'Asia/Shanghai')
+    const currentYear = baseDate.getFullYear()
+    const filePath = path.join(__dirname, '../public', `${currentYear}.json`)
     const data = fs.readFileSync(filePath, 'utf8')
 
     return JSON.parse(data)
@@ -87,15 +106,16 @@ async function isChineseWorkday(date) {
  * @returns {Promise<Date>} 下一个工作日的指定时间
  */
 async function getNextWorkdayTime(hour = 0, minute = 0) {
-  // 获取当前互联网时间
-  const now = await getInternetTime()
+  // 使用已缓存的当前时间（外部在关键时刻调用getInternetTime以刷新）
+  const now = getCurrentTime() || utcToZonedTime(new Date(), 'Asia/Shanghai')
 
   // 判断当前时间是否已经过了指定时间
-  const isPastTargetTime =
-    now.getHours() > hour || (now.getHours() === hour && now.getMinutes() >= minute)
+  const isPastTargetTime = now.getHours() > hour ||
+    (now.getHours() === hour && now.getMinutes() >= minute)
 
   // 如果当前是工作日且未过指定时间，设置为今天的指定时间
   const isToday = await isChineseWorkday(now)
+
   if (isToday && !isPastTargetTime) {
     const today = new Date(now)
     today.setHours(hour, minute, 0, 0)
@@ -104,6 +124,7 @@ async function getNextWorkdayTime(hour = 0, minute = 0) {
 
   // 设置为明天的指定时间
   const tomorrow = new Date(now)
+
   tomorrow.setDate(tomorrow.getDate() + 1)
   tomorrow.setHours(hour, minute, 0, 0)
 
@@ -163,6 +184,7 @@ function formatDateToUTC8(date) {
  */
 function handleApiError(error, operation = 'API调用') {
   console.error(`${operation}失败:`, error.message)
+
   if (error.response) {
     console.error('响应状态码:', error.response.status)
     console.error('响应数据:', error.response.data)
@@ -171,34 +193,17 @@ function handleApiError(error, operation = 'API调用') {
   } else {
     console.error('请求配置错误')
   }
+
   return error
 }
 
-/**
- * 检查指定时间是否在目标时间点附近（允许一定误差）
- * @param {Date} date - 要检查的时间
- * @param {number} targetHour - 目标小时
- * @param {number} targetMinute - 目标分钟
- * @param {number} allowedErrorMinutes - 允许的误差（分钟）
- * @returns {boolean} - 是否在目标时间点附近
- */
-function isTimeNear(date, targetHour, targetMinute = 0, allowedErrorMinutes = 1) {
-  const hour = date.getHours()
-  const minute = date.getMinutes()
-
-  // 检查小时是否匹配
-  if (hour !== targetHour) return false
-
-  // 检查分钟是否在允许误差范围内
-  const minuteDiff = Math.abs(minute - targetMinute)
-  return minuteDiff <= allowedErrorMinutes
-}
 
 export {
+  getCurrentTime,
   getInternetTime,
   getNextWorkdayTime,
+  wasLastInternetFetchSuccessful,
   isChineseWorkday,
   formatDateToUTC8,
-  handleApiError,
-  isTimeNear
+  handleApiError
 }

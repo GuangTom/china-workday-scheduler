@@ -1,10 +1,10 @@
-import schedule from 'node-schedule'
 import {
   getInternetTime,
   isChineseWorkday,
   getNextWorkdayTime,
   formatDateToUTC8
 } from './utils.js'
+import schedule from 'node-schedule'
 import config from './config.js'
 
 /**
@@ -32,9 +32,11 @@ class WorkdayScheduler {
     // 只记录启用的任务
     console.log('工作日调度时间配置:')
     const enabledTasks = this.scheduledTasks.filter(task => task.enabled)
+
     if (enabledTasks.length > 0) {
       enabledTasks.forEach(task => {
-        console.log(`- ${task.name}: ${task.hour}:${task.minute.toString().padStart(2, '0')}`)
+        console.log(`- ${task.name}: ${task.hour}:${
+          task.minute.toString().padStart(2, '0')}`)
       })
     } else {
       console.log('- 没有启用的任务')
@@ -94,31 +96,20 @@ class WorkdayScheduler {
       // 清空任务数组
       this.scheduledJobs = []
 
-      // 获取当前互联网时间
-      let now
+      // 刷新当前互联网时间（失败时在utils中自动回退为本地UTC+8）
       try {
-        now = await getInternetTime()
+        await getInternetTime()
       } catch (error) {
-        console.error('获取互联网时间失败，使用本地时间:', error.message)
-        now = new Date() // 使用本地时间作为备选
-      }
-
-      // 检查当前是否为工作日
-      let isWorkday
-      try {
-        isWorkday = await isChineseWorkday(now)
-      } catch (error) {
-        console.error('检查工作日失败，使用简单周末判断:', error.message)
-        // 简单判断工作日（周一至周五）
-        const day = now.getDay()
-        isWorkday = day !== 0 && day !== 6
+        console.error('获取互联网时间失败，使用本地时间作为备选:', error.message)
       }
 
       // 为每个启用的任务安排下一次执行
       const maxRetries = 3
 
       for (const task of this.scheduledTasks) {
-        if (!task.enabled) continue
+        if (!task.enabled) {
+          continue
+        }
 
         // 获取下一个工作日的指定时间
         let nextTaskTime
@@ -133,6 +124,7 @@ class WorkdayScheduler {
             // 检查下一个执行日期的后一天是否为休息日
             const nextDay = new Date(nextTaskTime)
             nextDay.setDate(nextDay.getDate() + 1)
+
             try {
               isNextDayRestDay = !(await isChineseWorkday(nextDay))
             } catch (error) {

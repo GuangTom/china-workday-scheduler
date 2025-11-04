@@ -1,7 +1,11 @@
 import WorkdayScheduler from './scheduler.js'
 import axios from 'axios'
 import config from './config.js'
-import { handleApiError } from './utils.js'
+import {
+  handleApiError,
+  getInternetTime,
+  wasLastInternetFetchSuccessful
+} from './utils.js'
 
 /**
  * 中国工作日调度器 - 主程序
@@ -92,6 +96,14 @@ if (isMainModule) {
 
   // 解析命令行参数
   const options = parseCommandLineArgs()
+
+  // 等待一次互联网时间初始化，以便后续使用全局时间无需等待
+  await getInternetTime()
+  // 若初始化未成功（使用了本地fallback），则异步再尝试一次获取互联网时间
+  if (!wasLastInternetFetchSuccessful()) {
+    setTimeout(() => { getInternetTime().catch(() => {}) }, 0)
+  }
+
 
   // 如果是测试模式，立即触发一次API调用
   if (options.testMode) {

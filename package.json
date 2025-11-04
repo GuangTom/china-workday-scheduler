@@ -1,6 +1,6 @@
 {
   "name": "china-workday-scheduler",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "在中国法定工作日的 00:00:00 调用 API 接口",
   "type": "module",
   "main": "src/index.js",

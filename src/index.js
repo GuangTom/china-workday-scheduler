@@ -15,16 +15,20 @@ import {
 /**
  * 调用API的函数
  * 用户可以根据需要修改此函数来实现自定义的API调用逻辑
+ * @param {Object} [task] - 触发此次调用的任务对象（可选）
  */
-async function callApi() {
+async function callApi(task) {
   try {
     console.log(`正在调用API: ${config.apiMethod} ${config.apiUrl}`)
+
+    // 优先使用任务配置中的 apiBody，如果未配置则使用全局 apiBody
+    const requestBody = (task && task.apiBody) ? task.apiBody : config.apiBody
 
     const response = await axios({
       method: config.apiMethod,
       url: config.apiUrl,
       headers: config.apiHeaders,
-      data: config.apiBody
+      data: requestBody
     })
 
     console.log('API调用成功，响应状态码:', response.status)

@@ -2,7 +2,8 @@ import {
   getInternetTime,
   isChineseWorkday,
   getNextWorkdayTime,
-  formatDateToUTC8
+  formatDateToUTC8,
+  getCurrentTime
 } from './utils.js'
 import schedule from 'node-schedule'
 import config from './config.js'
@@ -170,6 +171,28 @@ class WorkdayScheduler {
           continue
         }
 
+        // 运行在休息日：若今天是休息日且次日是工作日，并且未过目标时间
+        // 注意：若与 skipIfNextRestDay 冲突，以 skipIfNextRestDay 为准（上方已处理）
+        if (task.runIfNextWorkDay) {
+          const now = getCurrentTime() || new Date()
+          let isTodayWorkday = true
+          try {
+            isTodayWorkday = await isChineseWorkday(now)
+          } catch (error) {
+            // 回退为简单的周末判断
+            isTodayWorkday = now.getDay() !== 0 && now.getDay() !== 6
+          }
+
+          const isPastTargetTime = now.getHours() > task.hour ||
+            (now.getHours() === task.hour && now.getMinutes() >= task.minute)
+
+          if (!isTodayWorkday && !isNextDayRestDay && !isPastTargetTime) {
+            const todayRun = new Date(now)
+            todayRun.setHours(task.hour, task.minute, 0, 0)
+            nextTaskTime = todayRun
+          }
+        }
+
         console.log(`下一次执行时间 (${task.name}): ${formatDateToUTC8(nextTaskTime)}`)
 
         // 安排下一次执行
@@ -177,7 +200,7 @@ class WorkdayScheduler {
           console.log(`触发定时任务 (${task.name})，当前时间: ${formatDateToUTC8(new Date())}`)
 
           // 执行API调用
-          await this.executeApiCall()
+          await this.executeApiCall(task)
 
           // 安排下一次执行
           await this.scheduleNextExecution()
@@ -197,11 +220,12 @@ class WorkdayScheduler {
 
   /**
    * 执行API调用
+   * @param {Object} [task] - 触发此次调用的任务对象
    */
-  async executeApiCall() {
+  async executeApiCall(task) {
     try {
       console.log('执行API调用...')
-      await this.apiCallFunction()
+      await this.apiCallFunction(task)
       console.log('API调用成功')
     } catch (error) {
       console.error('API调用失败:', error)

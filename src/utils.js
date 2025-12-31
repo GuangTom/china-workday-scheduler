@@ -51,12 +51,9 @@ async function getInternetTime() {
  * 从本地JSON文件加载节假日数据
  * @returns {Object} 节假日数据对象
  */
-function loadHolidayData() {
+function loadHolidayDataByYear(year) {
   try {
-    // 根据当前年份选择对应的节假日 JSON 文件
-    const baseDate = getCurrentTime() || utcToZonedTime(new Date(), 'Asia/Shanghai')
-    const currentYear = baseDate.getFullYear()
-    const filePath = path.join(__dirname, '../public', `${currentYear}.json`)
+    const filePath = path.join(__dirname, '../public', `${year}.json`)
     const data = fs.readFileSync(filePath, 'utf8')
 
     return JSON.parse(data)
@@ -66,8 +63,16 @@ function loadHolidayData() {
   }
 }
 
-// 缓存节假日数据
-const holidayData = loadHolidayData()
+const holidayDataCache = new Map()
+const getHolidayDataByYear = (year) => {
+  const cached = holidayDataCache.get(year)
+  if (cached) {
+    return cached
+  }
+  const data = loadHolidayDataByYear(year)
+  holidayDataCache.set(year, data)
+  return data
+}
 
 /**
  * 检查指定日期是否为中国法定工作日
@@ -80,6 +85,8 @@ async function isChineseWorkday(date) {
     const formattedDate = format(date, 'yyyy-MM-dd')
 
     // 首先检查本地节假日数据
+    const year = date.getFullYear()
+    const holidayData = getHolidayDataByYear(year)
     const matchingDay = holidayData.days
       .find(day => day.date === formattedDate)
 

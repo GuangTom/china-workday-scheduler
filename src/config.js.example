@@ -31,6 +31,8 @@ const config = {
    * @item minute 分钟
    * @item enabled 是否启用
    * @item skipIfNextRestDay 当次日是休息日时，是否跳过执行
+   * @item runIfNextWorkDay 当今天是休息日且次日是工作日时，是否仍执行（与 skipIfNextRestDay 冲突时，以 skipIfNextRestDay 为准）
+   * @item apiBody (可选) 自定义该任务的请求体，若不填则使用全局 apiBody
    * */
   scheduleTasks: [
     // 任务1：0 时触发
@@ -39,7 +41,9 @@ const config = {
       hour: 0,
       minute: 0,
       enabled: true,
-      skipIfNextRestDay: false
+      skipIfNextRestDay: false,
+      runIfNextWorkDay: false,
+      // apiBody: { event: 'custom-event', value: 1 }
     },
     // 任务2：15 时触发
     {

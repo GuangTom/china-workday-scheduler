@@ -8,6 +8,77 @@ import {
 import schedule from 'node-schedule'
 import config from './config.js'
 
+export async function applyTaskSchedulingRules({ task, now, nextTaskTime }) {
+  const getNextWorkdayTimeAfter = async (baseDate, hour, minute) => {
+    const next = new Date(baseDate)
+    next.setDate(next.getDate() + 1)
+    next.setHours(hour, minute, 0, 0)
+
+    for (let i = 0; i < 370; i++) {
+      if (await isChineseWorkday(next)) {
+        return next
+      }
+      next.setDate(next.getDate() + 1)
+    }
+
+    return next
+  }
+
+  let skippedBecauseNextRestDay = false
+  let isTodayWorkday = true
+  let isTomorrowWorkday = true
+
+  try {
+    isTodayWorkday = await isChineseWorkday(now)
+  } catch (error) {
+    isTodayWorkday = now.getDay() !== 0 && now.getDay() !== 6
+  }
+
+  const tomorrow = new Date(now)
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  tomorrow.setHours(12, 0, 0, 0)
+  try {
+    isTomorrowWorkday = await isChineseWorkday(tomorrow)
+  } catch (error) {
+    isTomorrowWorkday = tomorrow.getDay() !== 0 && tomorrow.getDay() !== 6
+  }
+
+  if (task.runIfNextWorkDay) {
+    const isPastTargetTime = now.getHours() > task.hour ||
+      (now.getHours() === task.hour && now.getMinutes() >= task.minute)
+
+    if (!isTodayWorkday && isTomorrowWorkday && !isPastTargetTime) {
+      const todayRun = new Date(now)
+      todayRun.setHours(task.hour, task.minute, 0, 0)
+      nextTaskTime = todayRun
+    }
+  }
+
+  if (task.skipIfNextRestDay) {
+    for (let i = 0; i < 370; i++) {
+      const nextDay = new Date(nextTaskTime)
+      nextDay.setDate(nextDay.getDate() + 1)
+      nextDay.setHours(12, 0, 0, 0)
+
+      let isNextDayRestDay = false
+      try {
+        isNextDayRestDay = !(await isChineseWorkday(nextDay))
+      } catch (error) {
+        isNextDayRestDay = nextDay.getDay() === 0 || nextDay.getDay() === 6
+      }
+
+      if (!isNextDayRestDay) {
+        break
+      }
+
+      skippedBecauseNextRestDay = true
+      nextTaskTime = await getNextWorkdayTimeAfter(nextTaskTime, task.hour, task.minute)
+    }
+  }
+
+  return { nextTaskTime, skippedBecauseNextRestDay }
+}
+
 /**
  * 工作日调度器类
  */
@@ -112,27 +183,16 @@ class WorkdayScheduler {
           continue
         }
 
+        const now = getCurrentTime() || new Date()
+
         // 获取下一个工作日的指定时间
         let nextTaskTime
         let retryCount = 0
-        let isNextDayRestDay = false // 标记下一天是否为休息日
 
         while (retryCount < maxRetries) {
           try {
             // 使用统一的获取下一个工作日时间的函数
             nextTaskTime = await getNextWorkdayTime(task.hour, task.minute)
-
-            // 检查下一个执行日期的后一天是否为休息日
-            const nextDay = new Date(nextTaskTime)
-            nextDay.setDate(nextDay.getDate() + 1)
-
-            try {
-              isNextDayRestDay = !(await isChineseWorkday(nextDay))
-            } catch (error) {
-              console.error(`检查下一天是否为休息日失败:`, error.message)
-              // 简单判断是否为周末
-              isNextDayRestDay = nextDay.getDay() === 0 || nextDay.getDay() === 6
-            }
 
             break // 成功获取时间，跳出循环
           } catch (error) {
@@ -153,11 +213,6 @@ class WorkdayScheduler {
               }
 
               nextTaskTime = nextDay
-
-              // 简单判断下一天是否为休息日
-              const checkNextDay = new Date(nextTaskTime)
-              checkNextDay.setDate(checkNextDay.getDate() + 1)
-              isNextDayRestDay = checkNextDay.getDay() === 0 || checkNextDay.getDay() === 6
             } else {
               // 等待一段时间后重试
               await new Promise(resolve => setTimeout(resolve, 2000))
@@ -165,32 +220,10 @@ class WorkdayScheduler {
           }
         }
 
-        // 如果配置了当次日是休息日时跳过执行，且下一天确实是休息日，则跳过此次调度
-        if (task.skipIfNextRestDay && isNextDayRestDay) {
+        const ruleResult = await applyTaskSchedulingRules({ task, now, nextTaskTime })
+        nextTaskTime = ruleResult.nextTaskTime
+        if (ruleResult.skippedBecauseNextRestDay) {
           console.log(`跳过任务 ${task.name} 的调度，因为次日是休息日`)
-          continue
-        }
-
-        // 运行在休息日：若今天是休息日且次日是工作日，并且未过目标时间
-        // 注意：若与 skipIfNextRestDay 冲突，以 skipIfNextRestDay 为准（上方已处理）
-        if (task.runIfNextWorkDay) {
-          const now = getCurrentTime() || new Date()
-          let isTodayWorkday = true
-          try {
-            isTodayWorkday = await isChineseWorkday(now)
-          } catch (error) {
-            // 回退为简单的周末判断
-            isTodayWorkday = now.getDay() !== 0 && now.getDay() !== 6
-          }
-
-          const isPastTargetTime = now.getHours() > task.hour ||
-            (now.getHours() === task.hour && now.getMinutes() >= task.minute)
-
-          if (!isTodayWorkday && !isNextDayRestDay && !isPastTargetTime) {
-            const todayRun = new Date(now)
-            todayRun.setHours(task.hour, task.minute, 0, 0)
-            nextTaskTime = todayRun
-          }
         }
 
         console.log(`下一次执行时间 (${task.name}): ${formatDateToUTC8(nextTaskTime)}`)

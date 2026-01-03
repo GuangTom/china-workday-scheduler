@@ -1,6 +1,5 @@
 import axios from 'axios'
-import { format, isWeekend } from 'date-fns'
-import { utcToZonedTime } from 'date-fns-tz'
+import { utcToZonedTime, formatInTimeZone } from 'date-fns-tz'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -24,17 +23,18 @@ const wasLastInternetFetchSuccessful = () => lastInternetTimeFetchSucceeded
  */
 async function getInternetTime() {
   try {
-    // 使用time.is API获取北京时间
-    const response = await axios.get(
-      'https://timeapi.io/api/Time/current/zone?timeZone=Asia/Shanghai')
-
-    // timeapi.io返回的格式是 "2023-01-01T00:00:00"
-    const { dateTime } = response.data
+    // 使用 API 获取互联网时间
+    const response = await axios.get('https://www.baidu.com', {
+      timeout: 3000
+    })
+    // e.g. response.headers.date: 'Mon, 12 Jan 2026 04:12:30 GMT'
+    const dateStr = new Date(response.headers.date)
 
     // 更新全局时间缓存并返回
-    currentInternetTime = new Date(dateTime)
+    currentInternetTime = utcToZonedTime(dateStr, 'Asia/Shanghai')
     lastInternetTimeFetchSucceeded = true
 
+    console.log('当前互联网时间:', formatInTimeZone(currentInternetTime, 'Asia/Shanghai', 'yyyy-MM-dd HH:mm:ss'))
     return currentInternetTime
   } catch (error) {
     console.error('获取互联网时间失败:', error.message)
@@ -82,7 +82,7 @@ const getHolidayDataByYear = (year) => {
 async function isChineseWorkday(date) {
   try {
     // 格式化日期为YYYY-MM-DD格式
-    const formattedDate = format(date, 'yyyy-MM-dd')
+    const formattedDate = formatInTimeZone(date, 'Asia/Shanghai', 'yyyy-MM-dd')
 
     // 首先检查本地节假日数据
     const year = date.getFullYear()
@@ -96,13 +96,15 @@ async function isChineseWorkday(date) {
     }
 
     // 如果本地数据中没有找到，则根据是否为周末判断
-    const isWorkday = !isWeekend(date)
+    const isoDay = Number(formatInTimeZone(date, 'Asia/Shanghai', 'i'))
+    const isWorkday = isoDay !== 6 && isoDay !== 7
 
     return isWorkday
   } catch (error) {
     console.error('检查工作日失败:', error.message)
     // 如果出现错误，仅根据是否为周末判断
-    return !isWeekend(date)
+    const isoDay = Number(formatInTimeZone(date, 'Asia/Shanghai', 'i'))
+    return isoDay !== 6 && isoDay !== 7
   }
 }
 
